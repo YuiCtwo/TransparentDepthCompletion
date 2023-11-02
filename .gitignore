@@ -136,3 +136,12 @@ dmypy.json
 
 # Jetbrain
 .idea
+
+# Paper Files
+/video
+
+# Clion Files
+cmake-build-debug
+cmake-build-release
+
+/third-party
