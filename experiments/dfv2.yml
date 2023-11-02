@@ -2,12 +2,12 @@ general:
   log_dir: /home/ctwo/VDCNet/logs
   checkpoint_dir: /home/ctwo/VDCNet/logs/checkpoints
   model: DFNet
-  frame_h: 224
-  frame_w: 224
-#  pretrained_weight: /home/ctwo/VDCNet/logs/checkpoints/ckpt-best.pth
-  pretrained_weight:
+  frame_h: 240
+  frame_w: 320
+#  pretrained_weight: /home/ctwo/VDCNet/pretrained/df_w3_224x224.pth
+  pretrained_weight: /home/ctwo/VDCNet/pretrained/df_sn.pth
   finetune: False
-  running_type: train
+  running_type: val
   print_freq: 10
 
 # data settings
@@ -18,38 +18,42 @@ dataset:
   data_aug:
     depth_norm: True
     rgb_aug: False
+  depth_max: 10
+  depth_factor: 4000
+  with_trajectory: True
 
 training:
-  train_batch_size: 4
-  valid_batch_size: 16
+  train_batch_size: 8
+  valid_batch_size: 32
   use_multi_gpu: True
-  epochs: 30
-  lr: 0.0004
-  num_workers: 8
+  epochs: 2
+  lr: 0.0008
+  num_workers: 16
   decay_epochs: 15
   decay_gamma: 0.5
   save_epochs: 10
 
 model:
-  forward_windows: 5
+  forward_windows: 1
   depth_plane_num: 50
   pnet:
     type: VPointNet
-    hidden_dim: 32
+    hidden_dim: 24
     out_channels: 32
+    refine_times: 1
 
   color:
     type: PyramidPool
     out_channels: 32
 
   normal:
-    input_dim: # 1
+    enable: False
     refine: False
 
 
 loss:
-  type: ["sobel_normal_loss"]  #
-  weight: [0.5] #
+  type: []  # "sobel_normal_loss"
+  weight: [] #
 
 metrics:
   type: ["masked_depth_rmse", "masked_depth_mae", "masked_depth_rel", "depth_failing_105", "depth_failing_110", "depth_failing_125"]

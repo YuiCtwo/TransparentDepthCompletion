@@ -4,10 +4,11 @@ general:
   model: DFNet
   frame_h: 240
   frame_w: 320
-  pretrained_weight: /home/ctwo/VDCNet/pretrained/df_pt_L50_2.pth
+#  pretrained_weight: /home/ctwo/VDCNet/logs/checkpoints/ckpt-best.pth
+  pretrained_weight: /home/ctwo/VDCNet/pretrained/df_pt_cos.pth
   finetune: False
-  running_type: train
-  print_freq: 10
+  running_type: val
+  print_freq: 20
 
 # data settings
 dataset:
@@ -17,6 +18,7 @@ dataset:
   data_aug:
     depth_norm: True
     rgb_aug: False
+  with_trajectory: False
 
 training:
   train_batch_size: 8
@@ -25,7 +27,7 @@ training:
   epochs: 30
   lr: 0.0001
   num_workers: 8
-  decay_epochs: 10
+  decay_epochs: 40
   decay_gamma: 0.5
   save_epochs: 10
 
@@ -33,21 +35,22 @@ model:
   depth_plane_num: 50
   pnet:
     type: VPointNet # VPointNet
-    hidden_dim: 32
+    hidden_dim: 24
     out_channels: 32
+    refine_times: 1
 
   color:
     type: PyramidPool
     out_channels: 32
 
-  mask:
-    mask_encode: False
-    mask_encoder_channels:
+  normal:
+    enable: False
+    refine: False
 
 
 loss:
-  type: ["sn_cos_loss", "consistency_loss"]
-  weight: [0.1, 0.5]
+  type: ["cos_normal_loss"]
+  weight: [0.02]
 
 metrics:
-  type: ["masked_depth_rmse", "masked_depth_mae", "masked_depth_rel", "depth_failing_105", "depth_failing_110", "depth_failing_115"]
+  type: ["masked_depth_rmse", "masked_depth_mae", "masked_depth_rel", "depth_failing_105", "depth_failing_110", "depth_failing_125"]

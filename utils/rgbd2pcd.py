@@ -185,6 +185,7 @@ def random_xyz_sampling(xyz, n_points=4096):
     """
     :param xyz: (3xN or 3xHxW) original point cloud
     :param n_points: (S) sampled point number
+    :param mask: sampled firstly in mask region
     :return: (3xS) sampled point cloud
     """
     if len(xyz.size()) == 3:

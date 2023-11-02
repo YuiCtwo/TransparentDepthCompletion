@@ -13,22 +13,22 @@ from cfg.datasets.BlenderGlass_dataset import BlenderGlass
 from cfg.datasets.cleargrasp_dataset import mask_loader, safe_resize
 from utils import rgbd2pcd
 from utils.exr_handler import png_depth_loader
+from utils.icp import icp_o3d
 from utils.rgbd2pcd import get_surface_normal_from_xyz, random_xyz_sampling
 
 
 class BlenderGlassV2(BlenderGlass):
 
     def __init__(self, root, scene="scene1", img_h=480, img_w=640, rgb_aug=False, max_norm=True, depth_factor=1000,
-                 forward_windows_size=1):
+                 forward_windows_size=1, depth_max=10):
         self.forward_windows_size = forward_windows_size
-        super().__init__(root, scene, img_h, img_w, rgb_aug, max_norm, depth_factor)
+        super().__init__(root, scene, img_h, img_w, rgb_aug, max_norm, depth_factor, depth_max)
 
     def __len__(self):
-        # TODO: may not ignore?
-        return len(self.img_list) - self.forward_windows_size  # ignore last data
+        return len(self.img_list)  # ignore last data
 
     def __getitem__(self, index):
-        assert index < (len(self.img_list) - self.forward_windows_size)
+        # assert index < (len(self.img_list) - self.forward_windows_size)
         cur_rgb, cur_mask, cur_render_depth, cur_raw_depth = self._get_item(index)
 
         # depth norm
@@ -54,6 +54,8 @@ class BlenderGlassV2(BlenderGlass):
 
         sn_mask = torch.from_numpy(sn_mask).unsqueeze(0).float()
         cur_mask = torch.from_numpy(cur_mask).unsqueeze(0).float()
+        val_mask = (cur_render_depth < self.depth_max)
+        val_mask = np.logical_and(val_mask, cur_mask)
 
         cur_raw_depth = torch.from_numpy(cur_raw_depth).unsqueeze(0).float()
         cur_render_depth = torch.from_numpy(cur_render_depth).unsqueeze(0).float()
@@ -61,15 +63,17 @@ class BlenderGlassV2(BlenderGlass):
         cur_rgb = torch.from_numpy(cur_rgb).float()
         depth_gt_sn = get_surface_normal_from_xyz(xyz_gt.unsqueeze(0)).squeeze(0)
         pt = random_xyz_sampling(xyz_img, self.sampled_points_num)
+        training_mask = torch.ones_like(cur_mask)
 
         data_dict = {
             "cur_color": color,
-            "cur_rgb": cur_rgb,
+            # "cur_rgb": cur_rgb,
             "raw_depth": cur_raw_depth,
             "depth_scale": torch.tensor(depth_ma).repeat(self.img_h, self.img_w).float().unsqueeze(0),
-            "min_depth": torch.tensor(depth_mi).repeat(self.img_h, self.img_w).float().unsqueeze(0),
+            "min_depth": torch.tensor(0.01).repeat(self.img_h, self.img_w).float().unsqueeze(0),
             "mask": cur_mask,
-            "sn_mask": sn_mask,
+            "training_mask": training_mask,
+            "val_mask": val_mask,
             "pt": pt,
             # "xyz_gt": xyz_gt,
             "cur_gt_depth": cur_render_depth,
@@ -79,22 +83,38 @@ class BlenderGlassV2(BlenderGlass):
             "cx": torch.from_numpy(np.array(self.camera["cx"])).float(),
             "cy": torch.from_numpy(np.array(self.camera["cy"])).float(),
         }
-
-        for i in range(1, self.forward_windows_size+1):
-            forward_rgb, forward_mask, forward_depth, _ = self._get_item(index + i)
+        if self.forward_windows_size == 0:
+            forward_rgb, forward_mask, forward_depth, _ = self._get_item(index)
+            trans_mat = np.diag([1, 1, 1, 1])
             forward_color = self.transform_seq(forward_rgb)
+            data_dict["forward_{}_color".format(1)] = forward_color
+            data_dict["forward_{}_R_mat".format(1)] = torch.tensor(trans_mat[:3, :3]).float()
+            data_dict["forward_{}_t_vec".format(1)] = torch.tensor(trans_mat[:3, 3]).float()
+        else:
+            for i in range(1, self.forward_windows_size+1):
+                if (index + i) < len(self.img_list):
+                    forward_rgb, forward_mask, forward_depth, _ = self._get_item(index + i)
+                    forward_pose = self.pose_list[index + i]
+                    trans_mat = np.matmul(np.linalg.inv(forward_pose), cur_pose)
+                else:
+                    forward_rgb, forward_mask, forward_depth, _ = self._get_item(index)
+                    trans_mat = np.diag([1, 1, 1, 1])
+                forward_color = self.transform_seq(forward_rgb)
 
-            forward_pose = self.pose_list[index + i]
-            trans_mat = np.matmul(np.linalg.inv(forward_pose), cur_pose)
-
-            forward_depth = torch.from_numpy(forward_depth).unsqueeze(0).float()
-            forward_rgb = safe_resize(np.array(forward_rgb), self.img_w, self.img_h).transpose(2, 0, 1) / 255
-            forward_rgb = torch.from_numpy(forward_rgb).float()
-
-            data_dict["forward_{}_color".format(i)] = forward_color
-            data_dict["forward_{}_R_mat".format(i)] = torch.tensor(trans_mat[:3, :3]).float()
-            data_dict["forward_{}_t_vec".format(i)] = torch.tensor(trans_mat[:3, 3]).float()
-            data_dict["forward_{}_rgb".format(i)] = forward_rgb
-            data_dict["forward_{}_depth".format(i)] = forward_depth
+                if not self.with_trajectory:
+                    icp_depth = cur_render_depth.copy()
+                    icp_depth[cur_mask > 0] = 0
+                    icp_cur_xyz = rgbd2pcd.compute_xyz(icp_depth, self.camera)
+                    icp_cur_xyz = icp_cur_xyz.reshape(-1, 3)
+                    icp_depth = forward_depth.copy()
+                    icp_depth[forward_mask > 0] = 0
+                    icp_forward_xyz = rgbd2pcd.compute_xyz(icp_depth, self.camera)
+                    icp_forward_xyz = icp_forward_xyz.reshape(-1, 3)
+                    trans_mat = icp_o3d(icp_cur_xyz, icp_forward_xyz, tolerance=0.1)
+                data_dict["forward_{}_color".format(i)] = forward_color.clone()
+                data_dict["forward_{}_R_mat".format(i)] = torch.tensor(trans_mat[:3, :3]).float()
+                data_dict["forward_{}_t_vec".format(i)] = torch.tensor(trans_mat[:3, 3]).float()
+            # data_dict["forward_{}_rgb".format(i)] = forward_rgb
+            # data_dict["forward_{}_depth".format(i)] = forward_depth
 
         return data_dict

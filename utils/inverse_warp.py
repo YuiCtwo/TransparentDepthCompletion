@@ -39,15 +39,15 @@ def w2c(X, Y, Z, fx, fy, cx, cy, h, w):
     return U_proj, V_proj
 
 
-def inverse_warp_cpp(ref_depth, cur_data, R, t, fx: float, fy: float, cx: float, cy: float):
+def inverse_warp_cpp(ref_depth, cur_data, R, t, fx, fy, cx, cy):
     b, _, h, w = ref_depth.size()
     pt = get_xyz_cpp(ref_depth, fx, fy, cx, cy)
     XYZ_ = torch.bmm(R, pt.view(b, 3, -1))
     X = (XYZ_[:, 0, :] + t[:, 0].unsqueeze(1)).view(-1, 1, h, w)
     Y = (XYZ_[:, 1, :] + t[:, 1].unsqueeze(1)).view(-1, 1, h, w)
     Z = (XYZ_[:, 2, :] + t[:, 2].unsqueeze(1)).view(-1, 1, h, w)
-    U_proj = fx * X / Z + cx
-    V_proj = fy * Y / Z + cy
+    U_proj = fx.unsqueeze(1) * X / Z + cx.unsqueeze(1)
+    V_proj = fy.unsqueeze(1) * Y / Z + cy.unsqueeze(1)
     U_proj_normalized = (2 * U_proj / (w - 1) - 1).view(b, -1)
     V_proj_normalized = (2 * V_proj / (h - 1) - 1).view(b, -1)
     pixel_coords = torch.stack([U_proj_normalized, V_proj_normalized], dim=2).view(b, h, w, 2)  # [B, H, W, 2]

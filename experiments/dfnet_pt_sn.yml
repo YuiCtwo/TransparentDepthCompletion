@@ -2,10 +2,10 @@ general:
   log_dir: /home/ctwo/VDCNet/logs
   checkpoint_dir: /home/ctwo/VDCNet/logs/checkpoints
   model: DFNet
-  frame_h: 240
-  frame_w: 320
-  pretrained_weight: /home/ctwo/VDCNet/pretrained/df_pt_sn_no_consistency.pth
-#  pretrained_weight:
+  frame_h: 224
+  frame_w: 224
+#  pretrained_weight: /home/ctwo/VDCNet/pretrained/df_sn_mask224x224.pth
+  pretrained_weight: /home/ctwo/VDCNet/logs/checkpoints/ckpt-best.pth
   finetune: False
   running_type: train
   print_freq: 10
@@ -17,14 +17,17 @@ dataset:
   type: pic
   data_aug:
     depth_norm: True
-    rgb_aug: True
+    rgb_aug: False
+  with_trajectory: True
+  depth_max: 3
+  depth_factor: 5000
 
 training:
-  train_batch_size: 8
+  train_batch_size: 12
   valid_batch_size: 16
   use_multi_gpu: True
   epochs: 50
-  lr: 0.0008
+  lr: 0.001
   num_workers: 8
   decay_epochs: 20
   decay_gamma: 0.5
@@ -32,23 +35,24 @@ training:
 
 model:
   depth_plane_num: 50
+  refine_cost: True
   pnet:
-    type: VPointNet # VPointNet
-    hidden_dim: 32
+    type: VPointNet
+    hidden_dim: 24
     out_channels: 32
+    refine_times: 1
 
   color:
     type: PyramidPool
     out_channels: 32
 
   normal:
-    input_dim: 1
+    enable: False
     refine: False
 
-
 loss:
-  type: ["cos_normal_loss"] # ["cos_normal_loss", "consistency_loss"]
-  weight: [0.02]  # 0.6
+  type: [] #
+  weight: [] # 0.4
 
 metrics:
   type: ["masked_depth_rmse", "masked_depth_mae", "masked_depth_rel", "depth_failing_105", "depth_failing_110", "depth_failing_125"]

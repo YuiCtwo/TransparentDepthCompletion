@@ -11,12 +11,13 @@ from torch.nn import L1Loss
 from torch.autograd import Variable
 from math import exp
 from extensions.chamfer_dist import ChamferDistance
+from train.consistency_loss import mean_on_mask
 from utils.rgbd2pcd import get_surface_normal_from_depth, get_xyz, get_surface_normal_from_xyz
 
 
 class Metrics:
 
-    def __init__(self, eps=1e-5):
+    def __init__(self, eps=1e-8):
         self.eps = eps
 
     def depth_rmse(self, pred, gt):
@@ -97,10 +98,22 @@ def depth_loss(pred, gt, mask, beta=1.0, reduction="sum"):
     pred_copy = pred * mask
     gt_copy = gt * mask
     if reduction == "mean":
-        return F.smooth_l1_loss(pred_copy, gt_copy, reduction="sum", beta=beta) / (torch.sum(mask) + 1e-5)
+        return F.smooth_l1_loss(pred_copy, gt_copy, reduction="sum", beta=beta) / (torch.sum(mask) + 1e-8)
+        # return F.smooth_l1_loss(pred_copy, gt_copy, reduction="mean", beta=beta)
+    else:
+        return F.smooth_l1_loss(pred_copy, gt_copy, reduction="mean", beta=beta)
+
+
+def weighted_depth_loss(pred, gt, mask, beta=1.0, reduction="sum", weight=0.8):
+    b = pred.size()[0]
+    weighted_mask = torch.where(mask > 0, weight, 1-weight)
+    pred_copy = pred * weighted_mask
+    gt_copy = gt * weighted_mask
+    if reduction == "mean":
+        return F.smooth_l1_loss(pred_copy, gt_copy, reduction="sum", beta=beta) / (torch.sum(mask) + 1e-8)
+        # return F.smooth_l1_loss(pred_copy, gt_copy, reduction="mean", beta=beta)
     else:
         return F.smooth_l1_loss(pred_copy, gt_copy, reduction="sum", beta=beta) / b
-
 
 def pairwise_L1_depth_loss(pred, gt, mask, eps=1e-6):
     b = pred.size()[0]
@@ -178,15 +191,20 @@ def surface_normal_cos_loss(pred, gt_surface_normal, mask, camera, reduction="su
 
 def surface_normal_l1_loss(pred_sn, gt_sn, mask):
     sn_mask = mask.repeat(1, 3, 1, 1)
-    sn_loss = F.smooth_l1_loss(pred_sn[sn_mask > 0], gt_sn[sn_mask > 0])
+    # sn_mask = torch.where(sn_mask > 0, 0.95, 0.05)
+    if mask.sum() > 0:
+        sn_loss = F.smooth_l1_loss(pred_sn*sn_mask, gt_sn*sn_mask)
+    else:
+        sn_loss = 0
     return sn_loss
 
 
 def surface_normal_loss(nmap, gt_surface_normal, mask):
     # b = nmap.size()[0]
     b_mask = mask.squeeze(1)
+    b_mask = np.where(b_mask > 0, 0.8, 0.2)
     sn_loss = 1 - F.cosine_similarity(nmap, gt_surface_normal, dim=1)
-    sn_loss = sn_loss[b_mask > 0]
+    sn_loss = sn_loss * b_mask
     return torch.mean(sn_loss)
 
 

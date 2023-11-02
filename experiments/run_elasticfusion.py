@@ -141,7 +141,7 @@ if __name__ == '__main__':
     #     rgb_imgs.append(rgb_data[b])
     #     mask_imgs.append(mask_files[idx])
     #     timestamps.append(a)
-    # klg_path = os.path.join(base_dir, "scene.klg")
+    # klg_path = os.path.join(base_dir, "scene_v2.klg")
     # camera_path = os.path.join(base_dir, "camera")
     # with open(camera_path, "r") as fp:
     #     fx, fy, cx, cy = fp.readline().split()

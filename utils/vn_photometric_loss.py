@@ -42,7 +42,7 @@ def get_interpolated_grad(grad, x, y):
     return wa * Ia + wb * Ib + wc * Ic + wd * Id
 
 
-class VARNormalizedPhotometricLoss():
+class VARNormalizedPhotometricLoss:
 
     def __init__(self, refer_frame: KeyFrame, current_grey, camera, huber_delta=3):
         """
@@ -122,7 +122,7 @@ class VARNormalizedPhotometricLoss():
         # loss = huber_norm(r2, self.huber_delta)
         loss = np.mean(loss, keepdims=True)
         J = np.mean(J, axis=0, keepdims=True)
-        return loss, (2*J, loss)
+        return loss, (2 * J, loss)
         # return np.mean(r2), (2 * J, r2)
 
     def compute_J(self, px, py, pz, dx, dy, coord):
@@ -135,7 +135,7 @@ class VARNormalizedPhotometricLoss():
             gy = dy[y_idx, x_idx]
             _z = 1 / z
             _z2 = 1 / (z * z)
-            res = np.array([0]*6, dtype=np.float32)
+            res = np.array([0] * 6, dtype=np.float32)
             res[0] = _z * gx
             res[1] = _z * gy
             res[2] = (-x * _z2 * gx) + (-y * _z2 * gy)
@@ -170,11 +170,12 @@ def tracker(refer_frame: KeyFrame, current_grey, camera, max_iteration=50):
         #     loss_old = loss
         H = sp.SE3.exp(delta_H) * H
 
-
     return H.rotationMatrix(), H.translation()
 
+
 def cal_distance(p1, p2):
-    return np.sum((p2-p1)**2)
+    return np.sum((p2 - p1) ** 2)
+
 
 if __name__ == '__main__':
     # scale_factor = 1000
@@ -183,7 +184,6 @@ if __name__ == '__main__':
     imgs, poses, [H, W, focal] = load_blender_data(os.path.join(base_dir, "rgb"))
     pos_1 = poses[1]
     pos_2 = poses[5]
-
 
     trans_mat = np.matmul(np.linalg.inv(pos_2), pos_1)
     r_mat = trans_mat[:3, :3]

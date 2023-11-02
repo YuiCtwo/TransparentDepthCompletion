@@ -86,7 +86,9 @@ def vis_mask(mask, img=None, visualize=True, save_path=None):
 
 def vis_normal(nmap):
     surface_normal = nmap.float().squeeze().cpu().numpy()
+    # print(nmap.shape)
     surface_normal = surface_normal.transpose(1, 2, 0)  # (-1, 1)
+
     # print(np.amax(surface_normal))
     surface_normal[surface_normal > 1] = 1.0
     surface_normal[surface_normal < -1] = -1.0
@@ -149,3 +151,4 @@ def make_dir(path, dir_name):
     else:
         os.mkdir(dir_path)
         print("Successfully make dir {}".format(dir_path))
+    return dir_path

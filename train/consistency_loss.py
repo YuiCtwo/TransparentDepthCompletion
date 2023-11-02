@@ -22,7 +22,7 @@ def photometric_geometry_loss(cur_img, forward_img,
                               R, t, camera,
                               mask,
                               ssim_fn=None,
-                              weight=(1.0, 0.5)):
+                              weight=(1.0, 0.15)):
     
     b, _, h, w = cur_depth.size()
     pt = get_xyz(cur_depth, camera["fx"], camera["fy"], camera["cx"], camera["cy"]).float()

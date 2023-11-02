@@ -14,7 +14,7 @@ from cfg.datasets.cleargrasp_dataset import ClearGrasp
 from train.sobel_grad_loss import sobel_normal_loss, Sobel
 from utils.meter import AggregationMeter, Statistics
 from train.metrics import Metrics, SSIMLoss, depth_grad_loss_unsupervised, depth_loss, surface_normal_cos_loss, \
-    ConsLoss, depth_grad_loss, surface_normal_l1_loss, surface_normal_loss
+    ConsLoss, depth_grad_loss, surface_normal_l1_loss, surface_normal_loss, weighted_depth_loss
 from train.consistency_loss import photometric_geometry_loss, photometric_geometry_loss_v2
 from utils.rgbd2pcd import get_surface_normal_from_depth, get_xyz, get_surface_normal_from_xyz
 
@@ -29,9 +29,10 @@ class DFTrainer:
     def __init__(self, cfg, model):
         self.cfg = cfg
         self.model = model
+        self.depth_max = cfg.dataset.depth_max
         self.print_freq = cfg.general.print_freq
         self.camera = None
-        self.depth_factor = 4000
+        self.depth_factor = cfg.dataset.depth_factor
         self.running_type = cfg.general.running_type
         if self.cfg.general.pretrained_weight:
             self.pretrained_model_path = self.cfg.general.pretrained_weight
@@ -45,10 +46,12 @@ class DFTrainer:
         if not self.cfg.training.use_multi_gpu:
             self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         else:
+            # self.device = torch.device("cpu")
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             if self.device == torch.device("cpu"):
                 raise EnvironmentError("No GPUs")
         self.model = self.model.to(self.device)
+
         if torch.cuda.is_available() and self.cfg.training.use_multi_gpu:
             # Move all model parameters and buffers to the GPU
             self.model = torch.nn.DataParallel(self.model, device_ids=[0, 1])
@@ -57,8 +60,6 @@ class DFTrainer:
 
         # Create tensorboard writers
         self.train_writer = SummaryWriter(os.path.join(cfg.general.log_dir, 'writer'))
-
-
 
         self.optimizer = torch.optim.Adam(
             filter(lambda p: p.requires_grad, self.model.parameters()),
@@ -76,6 +77,7 @@ class DFTrainer:
         self._init_criterion()
         self._init_metrics()
         self._init_dataset()
+        self.epoch_now = 0
 
     def _init_metrics(self):
         self.metrics_class = Metrics()
@@ -93,9 +95,9 @@ class DFTrainer:
     def _init_criterion(self):
         self.loss_weight = self.cfg.loss.weight
         self.loss_type = self.cfg.loss.type
-        self.ssim_loss = SSIMLoss()
+        # self.ssim_loss = SSIMLoss()
         # self.sp_cons_loss = ConsLoss(reduction="mean")
-        self.sobel_fn = Sobel().to(self.device)
+        # self.sobel_fn = Sobel().to(self.device)
 
     def criterion(self, output, batch):
         camera = {
@@ -104,16 +106,19 @@ class DFTrainer:
             "cx": batch["cx"],
             "cy": batch["cy"]
         }
-        if self.running_type == "train" and self.cfg.model.normal.input_dim:
+        # if self.epoch_now < 35:
+        #     epoch_mask = batch["training_mask"]
+        # else:
+        #     epoch_mask = batch["mask"]
+        # epoch_mask = batch["mask"]
+        if self.cfg.model.normal.enable:
             pred = output[0]
             pred_sn = output[1]
-            out = 0.8 * depth_loss(pred, batch["cur_gt_depth"], batch["mask"], reduction="mean")
-            out = out + 0.2 * surface_normal_l1_loss(pred_sn, batch["depth_gt_sn"], batch["sn_mask"])
-            # if self.cfg.model.normal.refine:
-            #     out += 0.5 * depth_loss(output[2], batch["cur_gt_depth"], batch["mask"], reduction="mean")
+            out = depth_loss(pred, batch["cur_gt_depth"], batch["mask"], reduction="mean", beta=0.01)
+            out = out + surface_normal_l1_loss(pred_sn, batch["depth_gt_sn"], batch["mask"])
         else:
             pred = output
-            out = depth_loss(pred, batch["cur_gt_depth"], batch["mask"], reduction="mean")
+            out = depth_loss(pred, batch["cur_gt_depth"], batch["mask"], reduction="mean", beta=1)
         # pred = output
         # out = 0.5 * depth_loss(pred, batch["cur_gt_depth"], batch["mask"], reduction="mean")
 
@@ -128,31 +133,35 @@ class DFTrainer:
                 ) * self.loss_weight[i]
 
             elif loss_str == "consistency_loss_v2":
-                out = out + photometric_geometry_loss_v2(pred, self.cfg.model.forward_windows, batch, camera) * self.loss_weight[i]
-            elif loss_str == "sobel_normal_loss":
-                out = out + sobel_normal_loss(pred, batch["cur_gt_depth"], batch["mask"], self.sobel_fn) * self.loss_weight[i]
+                out = out + photometric_geometry_loss_v2(pred, self.cfg.model.forward_windows, batch, camera) * \
+                      self.loss_weight[i]
+            # elif loss_str == "sobel_normal_loss":
+            #     out = out + sobel_normal_loss(pred, batch["cur_gt_depth"], epoch_mask, self.sobel_fn) * self.loss_weight[i]
             elif loss_str == "cos_normal_loss":
                 out = out + surface_normal_cos_loss(pred, batch["depth_gt_sn"], batch["mask"], camera, reduction="mean")
         return out
 
     def _init_dataset(self):
-        if self.cfg.general.running_type == "train":
-            self._init_train_dataset(["seq1", "seq2", "seq3", "seq4", "two_glass", "two_glass2"])
-            self._init_val_dataset(["val_seq1", "val_seq2", "val_seq4"])
-        elif self.cfg.general.running_type == "test":
-            if self.cfg.dataset.name == "cleargrasp":
-                val_dataset = ClearGrasp(self.cfg.dataset.dataset_dir, "val",
-                                         self.cfg.general.frame_h, self.cfg.general.frame_w,
-                                         specific_ds=None,
-                                         max_norm=self.cfg.dataset.data_aug.depth_norm)
-                self.val_data_loader = DataLoader(
-                    val_dataset,
-                    batch_size=self.cfg.training.valid_batch_size,
-                    shuffle=False,
-                    pin_memory=True,
-                    num_workers=self.cfg.training.num_workers,
-                    drop_last=True
-                )
+        # if self.cfg.general.running_type == "train" or self.cfg.general.running_type == "val":
+        training_list = []
+        for i in range(2):
+            training_list.append("seq"+str(i+1))
+        self._init_train_dataset(training_list)
+        self._init_val_dataset(["val_seq1"])
+        # elif self.cfg.general.running_type == "test":
+        #     if self.cfg.dataset.name == "cleargrasp":
+        #         val_dataset = ClearGrasp(self.cfg.dataset.dataset_dir, "val",
+        #                                  self.cfg.general.frame_h, self.cfg.general.frame_w,
+        #                                  specific_ds=None,
+        #                                  max_norm=self.cfg.dataset.data_aug.depth_norm)
+        #         self.val_data_loader = DataLoader(
+        #             val_dataset,
+        #             batch_size=self.cfg.training.valid_batch_size,
+        #             shuffle=False,
+        #             pin_memory=True,
+        #             num_workers=self.cfg.training.num_workers,
+        #             drop_last=True
+        #         )
 
     def _init_val_dataset(self, scene_name):
         dataset_name = list(scene_name)
@@ -167,7 +176,8 @@ class DFTrainer:
                     rgb_aug=self.cfg.dataset.data_aug.rgb_aug,
                     max_norm=self.cfg.dataset.data_aug.depth_norm,
                     depth_factor=self.depth_factor,
-                    forward_windows_size=self.cfg.model.forward_windows
+                    forward_windows_size=self.cfg.model.forward_windows,
+                    depth_max=self.depth_max
                 )
             else:
                 ds = BlenderGlass(
@@ -177,13 +187,15 @@ class DFTrainer:
                     img_w=self.cfg.general.frame_w,
                     rgb_aug=self.cfg.dataset.data_aug.rgb_aug,
                     max_norm=self.cfg.dataset.data_aug.depth_norm,
-                    depth_factor=self.depth_factor
+                    depth_factor=self.depth_factor,
+                    with_trajectory=self.cfg.dataset.with_trajectory,
+                    depth_max=self.depth_max
                 )
             val_dataset.append(ds)
         dataset = ConcatDataset(val_dataset)
         self.val_data_loader = DataLoader(
             dataset,
-            batch_size=self.cfg.training.train_batch_size,
+            batch_size=self.cfg.training.valid_batch_size,
             shuffle=False,
             pin_memory=True,
             num_workers=self.cfg.training.num_workers,
@@ -216,7 +228,9 @@ class DFTrainer:
                     img_w=self.cfg.general.frame_w,
                     rgb_aug=self.cfg.dataset.data_aug.rgb_aug,
                     max_norm=self.cfg.dataset.data_aug.depth_norm,
-                    depth_factor=self.depth_factor
+                    depth_factor=self.depth_factor,
+                    with_trajectory=self.cfg.dataset.with_trajectory,
+                    depth_max=self.depth_max
                 )
             training_dataset.append(ds)
         training_dataset = ConcatDataset(training_dataset)
@@ -240,12 +254,16 @@ class DFTrainer:
             loss_meter.reset()
             batch_nums = len(self.train_data_loader)
             torch.cuda.empty_cache()
+            self.epoch_now = epoch
             for batch_idx, batch in enumerate(self.train_data_loader):
                 batch_start_time = time()
                 # clear gradient
                 self.optimizer.zero_grad()
                 dict2device(batch, self.device)
-                pred = self.model(batch)
+                # pred = self.model(batch)
+                pred = self.model(batch["cur_color"], batch["forward_color"],
+                                  batch["R_mat"], batch["t_vec"], batch["fx"],
+                                  batch["fy"], batch["cx"], batch["cy"], batch["depth_scale"])
                 batch_size = batch["cur_color"].size()[0]
                 loss = self.criterion(pred, batch)
                 loss.backward()
@@ -299,6 +317,45 @@ class DFTrainer:
 
         print("Training finished, total time used: {:.2f}h".format((time() - training_start_time) / 3600))
 
+
+    def start_validating_resized(self, resized_h=120, resized_w=160):
+        print("start validating....")
+        self.running_type = "val"
+        metrics_num = len(self.metrics_dict.keys())
+        metric_meter = AggregationMeter(metrics_num)
+        loss_meter = Statistics()
+        metrics_vec = []
+        self.model.eval()
+        loss_meter.reset()
+        metric_meter.reset()
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(self.val_data_loader):
+                dict2device(batch, self.device)
+                pred = self.model(batch["cur_color"], batch["forward_color"],
+                                  batch["R_mat"], batch["t_vec"], batch["fx"],
+                                  batch["fy"], batch["cx"], batch["cy"], batch["depth_scale"])
+                batch_size = batch["cur_color"].size()[0]
+                loss = self.criterion(pred, batch)
+                if self.cfg.model.normal.enable:
+                    pred_depth = pred[0]
+                else:
+                    pred_depth = pred
+                pred_depth = F.interpolate(pred_depth, size=(resized_h, resized_w))
+                gt_depth = F.interpolate(batch["cur_gt_depth"], size=(resized_h, resized_w))
+                mask = F.interpolate(batch["mask"], size=(resized_h, resized_w))
+                for k, v in self.metrics_dict.items():
+                    metrics_vec.append(
+                        (self.metrics_dict[k](pred_depth, gt_depth, mask).cpu().item(),
+                         batch_size))
+                metric_meter.update(metrics_vec)
+                loss_meter.update(loss.cpu().item(), batch_size)
+                metrics_vec.clear()
+            print("validating finished, loss in val dataset: {:.4f}".format(loss_meter.global_avg))
+        res = {}
+        for idx, k in enumerate(self.metrics_dict.keys()):
+            res[k] = metric_meter.global_avg[idx]
+        return loss_meter.global_avg, res
+
     def start_validating(self):
         print("start validating....")
         self.running_type = "val"
@@ -312,12 +369,18 @@ class DFTrainer:
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.val_data_loader):
                 dict2device(batch, self.device)
-                pred = self.model(batch)
+                pred = self.model(batch["cur_color"], batch["forward_color"],
+                                  batch["R_mat"], batch["t_vec"], batch["fx"],
+                                  batch["fy"], batch["cx"], batch["cy"], batch["depth_scale"])
                 batch_size = batch["cur_color"].size()[0]
                 loss = self.criterion(pred, batch)
+                if self.cfg.model.normal.enable:
+                    pred_depth = pred[0]
+                else:
+                    pred_depth = pred
                 for k, v in self.metrics_dict.items():
                     metrics_vec.append(
-                        (self.metrics_dict[k](pred, batch["cur_gt_depth"], batch["mask"]).cpu().item(),
+                        (self.metrics_dict[k](pred_depth, batch["cur_gt_depth"], batch["val_mask"]).cpu().item(),
                          batch_size))
                 metric_meter.update(metrics_vec)
                 loss_meter.update(loss.cpu().item(), batch_size)

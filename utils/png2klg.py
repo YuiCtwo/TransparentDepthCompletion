@@ -29,7 +29,7 @@ def write_klg(base_dir, rgb_imgs, depth_imgs, mask_imgs, timestamps, camera, tar
 
         cur_depth_path = base_dir + '/' + depth
 
-        depth_image = cv2.imread(cur_depth_path, cv2.IMREAD_UNCHANGED) / depth_scale
+        depth_image = cv2.imread(cur_depth_path, cv2.IMREAD_UNCHANGED)
 
         mask_path = base_dir + '/' + mask
         mask_image = cv2.imread(mask_path)
@@ -100,6 +100,6 @@ def write_klg(base_dir, rgb_imgs, depth_imgs, mask_imgs, timestamps, camera, tar
         # klg.write(bytes(camera["cy"]))
 
         curr_frame += 1
-        break
+        # break
 
     klg.close()
