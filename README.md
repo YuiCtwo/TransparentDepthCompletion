@@ -66,3 +66,9 @@ python utils/png2klg.py
 ```
 
 - compile code in `PersudoSLAM` as ElasticFusion and run it
+
+## Dataset
+
+synthetic dataset is available at [here](https://drive.google.com/file/d/1fgnoVxZFtUuDBs5EGbtgFdx0ScVSybLL/view?usp=sharing)
+
+
